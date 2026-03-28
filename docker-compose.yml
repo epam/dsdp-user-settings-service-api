@@ -1,0 +1,93 @@
+version: '3.1'
+services:
+  settings-db:
+    image: postgres:15.5
+    environment:
+      POSTGRES_DB: settings
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+      - ./docker-local/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  pgadmin:
+    image: dpage/pgadmin4:8.1
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@email.com
+      PGADMIN_DEFAULT_PASSWORD: root
+    ports:
+      - "5555:80"
+    depends_on:
+      - settings-db
+
+  kafka:
+    image: lensesio/fast-data-dev:3.3
+    container_name: kafka
+    ports:
+      - "2181:2181"
+      - "3030:3030"
+      - "8081-8083:8081-8083"
+      - "9581-9585:9581-9585"
+      - "9092:9092"
+
+  redis-master:
+    image: redis:6.2.6-alpine
+    volumes:
+      - redis:/data
+    ports:
+      - "6379:6379"
+
+  redis-slave:
+    image: redis:6.2.6-alpine
+    command: redis-server --slaveof redis-master 6379
+    volumes:
+      - redis:/data
+    depends_on:
+      - redis-master
+
+  redis-sentinel:
+    image: redis:6.2.6-alpine
+    restart: always
+    ports:
+      - '26379:26379'
+    command: redis-server /redis/sentinel.conf '--sentinel'
+    volumes:
+      - redis:/data
+      - ./docker-local/redis:/redis/
+    depends_on:
+      - redis-master
+      - redis-slave
+
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    environment:
+      - REDIS_HOSTS=local:redis-master:6379
+      - HTTP_USER=admin
+      - HTTP_PASSWORD=qwerty
+    ports:
+      - "8002:8081"
+    depends_on:
+      - redis-master
+
+  user-settings-service:
+    build: .
+    platform: linux/x86_64
+    container_name: user-settings-service
+    user: root
+    ports:
+      - "8001:8001"
+      - "5005:5005"
+    environment:
+      JAVA_OPTS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -Dspring.profiles.active=local"
+    depends_on:
+      - settings-db
+      - redis-sentinel
+      - kafka
+
+volumes:
+  redis:
+    driver: local
+  postgres_data:
+    driver: local

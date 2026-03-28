@@ -1,0 +1,17 @@
+apiVersion: security.istio.io/v1beta1
+kind: RequestAuthentication
+metadata:
+  name: {{ include "user-settings-service-api.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "user-settings-service-api.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "user-settings-service-api.selectorLabels" . | nindent 6 }}
+  jwtRules:
+    - forwardOriginalToken: true
+      fromHeaders:
+        - name: X-Access-Token
+      issuer: {{ include "issuer.mygov-biz" . | quote }}
+      jwksUri: {{ include "jwksUri.mygov-biz" . | quote }}

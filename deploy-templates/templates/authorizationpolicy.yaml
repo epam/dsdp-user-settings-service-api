@@ -1,0 +1,24 @@
+kind: AuthorizationPolicy
+apiVersion: security.istio.io/v1beta1
+metadata:
+  name: {{ include "user-settings-service-api.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "user-settings-service-api.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "user-settings-service-api.selectorLabels" . | nindent 6 }}
+  rules:
+    - from:
+        - source:
+            notRequestPrincipals:
+              - '*'
+      to:
+        - operation:
+            notPaths:
+              - /actuator*
+              - /openapi
+              - /swagger-ui/*
+              - /v3*
+  action: DENY

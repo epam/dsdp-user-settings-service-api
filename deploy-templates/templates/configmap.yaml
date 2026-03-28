@@ -1,0 +1,122 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "user-settings-service-api.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "user-settings-service-api.labels" . | nindent 4 }}
+data:
+  config.yaml: |-
+    spring:
+      {{- if .Values.sentinel.ssl.enabled }}
+      ssl:
+        bundle:
+          pem:
+            redis-ssl-bundle:
+              truststore:
+                certificate: ${REDIS_SSL_CA_PATH}
+              keystore:
+                certificate: ${REDIS_CLIENT_CERT}
+                private-key: ${REDIS_CLIENT_KEY}
+      {{- end }}
+      data:
+        redis:
+          password: ${SENTINEL_PASSWORD}
+          {{- if .Values.sentinel.ssl.enabled }}
+          ssl:
+            enabled: true
+            bundle: redis-ssl-bundle
+          {{- end }}
+          sentinel:
+            master: mymaster
+            nodes:
+              - ${SENTINEL_HOST}:${SENTINEL_PORT}
+
+    {{- if .Values.sentinel.ssl.enabled }}
+    redis:
+      ssl:
+        verify-mode: {{ .Values.sentinel.ssl.verifyMode | default "CA" }}
+    {{- end }}
+
+    server: {{ toYaml .Values.config.server | nindent 6 }}
+    
+    {{- if eq .Values.global.deploymentMode "development" }}
+    management:
+      endpoints:
+        web:
+          exposure:
+            include: '*'
+      tracing:
+        sampling:
+          probability: 1.0
+    {{- else }}
+    management:
+      endpoints:
+        web:
+          exposure:
+            include: 'health, prometheus, prometheus-text'
+      tracing:
+        sampling:
+          probability: {{ .Values.config.tracing.samplingProbability }}
+    {{- end }}
+      otlp:
+        tracing:
+          endpoint: {{ .Values.otelExporter.endpoint }}
+    
+    data-platform:
+      datasource:
+        url: jdbc:postgresql://${DB_HOST}:${DB_PORT}/${DB_NAME}?ApplicationName={{ include "user-settings-service-api.name" . }}${DB_URL_PROPERTIES}
+        username: ${DB_USERNAME}
+        password: ${DB_PASSWORD}
+        connection-timeout: {{ (index .Values.config "data-platform").datasource.connectionTimeout }}
+        maximum-pool-size: {{ (index .Values.config "data-platform").datasource.maxPoolSize }}
+      kafka:
+        producer:
+          enabled: true
+        topics:
+          user-notifications: {{ .Values.clusterName }}-{{ .Release.Namespace }}-user-notifications
+        topic-properties:
+          creation:
+            num-partitions: {{ .Values.kafka.numPartitions }}
+            replication-factor: {{ .Values.kafka.replicationFactor }}
+        bootstrap: {{ .Values.kafka.bootstrapServers }}
+        ssl:
+          enabled: {{ .Values.kafka.ssl.enabled }}
+          keystore-certificate: ${KAFKA_USER_KEYSTORE_CERTIFICATE}
+          keystore-key: ${KAFKA_USER_KEYSTORE_KEY}
+          truststore-certificate: ${KAFKA_CLUSTER_TRUSTSTORE}
+          keystore-type: {{ .Values.kafka.sslCertType }}
+          truststore-type: {{ .Values.kafka.sslCertType }}
+
+    platform:
+      security:
+        csrf:
+          enabled: {{ .Values.platform.security.csrf.enabled }}
+      logging:
+        aspect:
+          enabled: {{ .Values.config.logging.aspect.enabled }}
+
+    audit:
+      kafka:
+        bootstrap: {{ .Values.kafka.bootstrapServers }}
+        topic: {{ .Values.clusterName }}-{{ .Release.Namespace }}-audit-events
+        schema-registry:
+          url: {{ .Values.config.audit.kafka.schemaRegistryUrl }}
+          ssl:
+            enabled: {{ .Values.kafka.ssl.enabled }}
+            keystore-certificate: ${SCHEMA_REGISTRY_KEYSTORE_CERTIFICATE}
+            keystore-key: ${SCHEMA_REGISTRY_KEYSTORE_KEY}
+            truststore-certificate: ${SCHEMA_REGISTRY_CLUSTER_TRUSTSTORE}
+        ssl:
+          enabled: {{ .Values.kafka.ssl.enabled }}
+          keystore-certificate: ${KAFKA_USER_KEYSTORE_CERTIFICATE}
+          keystore-key: ${KAFKA_USER_KEYSTORE_KEY}
+          truststore-certificate: ${KAFKA_CLUSTER_TRUSTSTORE}
+    verification:
+      otp:
+        time-to-live: {{ .Values.verification.otp.timeToLive }}
+    
+    {{- if .Values.global.language }}
+    locale:
+      language: {{ .Values.global.language }}
+    {{- end }}

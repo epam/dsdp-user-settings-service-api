@@ -1,0 +1,336 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "user-settings-service-api.name" . }}
+  annotations:
+    configmap.reloader.stakater.com/reload: {{ include "user-settings-service-api.name" . }}
+  labels:
+    {{- include "user-settings-service-api.labels" . | nindent 4 }}
+spec:
+  {{- if .Values.autoscaling.hpa.enabled }}
+  replicas: {{ .Values.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "user-settings-service-api.selectorLabels" . | nindent 6 }}
+  strategy:
+    type: {{ .Values.global.deploymentStrategy | default "RollingUpdate" }}
+  template:
+    metadata:
+      annotations:
+        {{- if .Values.istio.sidecar.enabled }}
+        sidecar.istio.io/inject: "true"
+        traffic.sidecar.istio.io/excludeOutboundPorts: {{ .Values.extraTrafficExcludeOutboundPorts | squote }}
+        {{- if .Values.istio.sidecar.requestsLimitsEnabled }}
+          {{- include "user-settings-service-api.istioResources" . | nindent 8 }}
+        {{- else }}
+        inject.istio.io/templates: 'sidecar,emptyRequestsLimits'
+        {{- end }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+          {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "user-settings-service-api.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "user-settings-service-api.serviceAccountName" . }}
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- else if .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.image.pullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      automountServiceAccountToken: {{ .Values.automountServiceAccountToken }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      schedulerName: {{ .Values.schedulerName }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      initContainers:
+        {{- with .Values.extraInitContainers }}
+        {{- tpl . $ | nindent 8 }}
+        {{- end }}
+        - name: dbchecker
+          image: "{{ .Values.global.imageRegistry | default "docker.io" }}/{{ .Values.dbchecker.image.repository }}:{{ .Values.dbchecker.image.tag }}"
+          imagePullPolicy: {{ .Values.dbchecker.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.dbchecker.securityContext | nindent 12 }}
+          command:
+            - sh
+            - -c
+            - |
+              echo 'Waiting for Database to become ready...'
+
+              # Ensure environment variables are set
+              if [ -z "$PGHOST" ] || [ -z "$PGPORT" ]; then
+                echo "ERROR: PGHOST or PGPORT are not set properly."
+                exit 1
+              fi
+
+              until printf "." && nc -z -w 2 "$PGHOST" "$PGPORT"; do
+                  sleep 2;
+              done;
+
+              echo 'Database OK ✓'
+          resources:
+            {{- toYaml .Values.dbchecker.resources | nindent 12 }}
+          env:
+            - name: PGHOST
+              {{- if .Values.postgres.host }}
+              value: {{ .Values.postgres.host }}
+              {{- else }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.integrationSecretName }}
+                  key: address
+              {{- end }}
+            - name: PGPORT
+              {{- if .Values.postgres.port }}
+              value: {{ .Values.postgres.port | squote }}
+              {{- else }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.integrationSecretName }}
+                  key: port
+              {{- end }}
+        - name: kafkachecker
+          image: "{{ .Values.global.imageRegistry | default "docker.io" }}/{{ .Values.kafkachecker.image.repository }}:{{ .Values.kafkachecker.image.tag }}"
+          imagePullPolicy: {{ .Values.kafkachecker.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.kafkachecker.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.kafkachecker.resources | nindent 12 }}
+          command:
+            - sh
+            - -c
+            - |
+              while true; do
+                for srv in $(echo $KAFKA_BOOTSTRAP_SERVERS | tr ',' ' '); do
+                  host=${srv%%:*}
+                  port=${srv##*:}
+                  echo "Checking $host:$port..."
+                  if nc -z -w 1 $host $port; then
+                    echo "Kafka $host:$port is reachable"
+                    exit 0
+                  fi
+                done
+                echo "Waiting for Kafka..."
+                sleep 10
+              done
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: {{ .Values.kafka.bootstrapServers }}
+        - name: auditchecker
+          image: "{{ .Values.global.imageRegistry | default "docker.io" }}/{{ .Values.auditchecker.image.repository }}:{{ .Values.auditchecker.image.tag }}"
+          imagePullPolicy: {{ .Values.auditchecker.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.auditchecker.securityContext | nindent 12 }}
+          command:
+            - sh
+            - -c
+            - |
+              echo 'Waiting for Kafka audit schema registry to become ready...'
+
+              # Ensure environment variables are set
+              if [ -z "$KAFKA_AUDIT_SCHEMA_REGISTRY_URL" ]; then
+                echo "ERROR: KAFKA_AUDIT_SCHEMA_REGISTRY_URL is not set properly."
+                exit 1
+              fi
+
+              while true; do
+                for url in $(echo $KAFKA_AUDIT_SCHEMA_REGISTRY_URL | tr ',' ' '); do
+                  host=${url%%:*}
+                  port=${url##*:}
+                  echo "Checking $host:$port..."
+                  if nc -z -w 1 $host $port; then
+                    echo "Kafka audit schema registry $host:$port is reachable"
+                    exit 0
+                  fi
+                done
+                echo "Waiting for Kafka audit schema registry..."
+                sleep 10
+              done
+          env:
+            - name: KAFKA_AUDIT_SCHEMA_REGISTRY_URL
+              value: {{ .Values.config.audit.kafka.schemaRegistryUrl | replace "https://" "" }}
+          resources:
+            {{- toYaml .Values.auditchecker.resources | nindent 12 }}
+      containers:
+        - name: {{ include "user-settings-service-api.name" . }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.lifecycleHooks }}
+          lifecycle:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.container.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+          {{- with .Values.container.extraEnvVars }}
+            {{- tpl . $ | nindent 12 }}
+          {{- end }}
+            {{- if eq .Values.global.deploymentMode "development" }}
+            - name: SPRING_PROFILES_ACTIVE
+              value: 'development'
+            {{- end }}
+            - name: DB_HOST
+            {{- if .Values.postgres.host }}
+              value: {{ .Values.postgres.host }}
+            {{- else }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.integrationSecretName }}
+                  key: address
+            {{- end }}
+            - name: DB_PORT
+            {{- if .Values.postgres.port }}
+              value: {{ .Values.postgres.port  | squote }}
+            {{- else }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.integrationSecretName }}
+                  key: port
+            {{- end }}
+            - name: DB_NAME
+              value: {{ include "database.name" . }}
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  key: settRoleName
+                  name: {{ .Values.postgres.appSecretName }}
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  key: settRolePass
+                  name: {{ .Values.postgres.appSecretName }}
+            - name: KAFKA_USER_KEYSTORE_CERTIFICATE
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.secretName }}
+                  key: user.crt
+            - name: KAFKA_USER_KEYSTORE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.secretName }}
+                  key: user.key
+            - name: KAFKA_CLUSTER_TRUSTSTORE
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.secretName }}
+                  key: ca.crt
+            - name: SCHEMA_REGISTRY_KEYSTORE_CERTIFICATE
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.schemaRegistrySecretName }}
+                  key: user.crt
+            - name: SCHEMA_REGISTRY_KEYSTORE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.schemaRegistrySecretName }}
+                  key: user.key
+            - name: SCHEMA_REGISTRY_CLUSTER_TRUSTSTORE
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafka.schemaRegistrySecretName }}
+                  key: ca.crt
+            - name: SENTINEL_HOST
+              {{- if .Values.sentinel.host }}
+              value: {{ .Values.sentinel.host }}
+              {{- else }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.sentinel.secretName }}
+                  key: address
+              {{- end }}
+            - name: SENTINEL_PORT
+              {{- if .Values.sentinel.port }}
+              value: {{ .Values.sentinel.port | squote }}
+              {{- else }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.sentinel.secretName }}
+                  key: sentinel_port
+              {{- end }}
+            - name: SENTINEL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.sentinel.secretName }}
+                  key: password
+            {{- if .Values.sentinel.ssl.enabled }}
+            - name: REDIS_CLIENT_CERT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.sentinel.secretName }}
+                  key: cert
+            - name: REDIS_CLIENT_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.sentinel.secretName }}
+                  key: key
+            - name: REDIS_SSL_CA_PATH
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.sentinel.secretName }}
+                  key: cacert
+            {{- end }}
+            - name: SPRING_CLOUD_BOOTSTRAP_ENABLED
+              value: 'true'
+            - name: KUBERNETES_NAMESPACE_CURRENT
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          {{- with .Values.container.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: api
+              containerPort: {{ .Values.container.port }}
+              protocol: TCP
+          {{- with .Values.container.startupProbe }}
+          startupProbe:
+            {{- tpl . $ | nindent 12 }}
+          {{- end }}
+          {{- with .Values.container.livenessProbe }}
+          livenessProbe:
+            {{- tpl . $ | nindent 12 }}
+          {{- end }}
+          {{- with .Values.container.readinessProbe }}
+          readinessProbe:
+            {{- tpl . $ | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            {{- with .Values.container.extraVolumeMounts }}
+              {{- tpl . $ | nindent 12 }}
+            {{- end }}
+            - mountPath: /app/config/config.yaml
+              name: config
+              readOnly: true
+              subPath: config.yaml
+      volumes:
+        {{- with .Values.container.extraVolumes }}
+          {{- tpl . $ | nindent 8 }}
+        {{- end }}
+        - name: config
+          configMap:
+            name: {{ include "user-settings-service-api.name" . }}

@@ -1,0 +1,269 @@
+clusterName: ""
+extraTrafficExcludeOutboundPorts: "5432,6379,6380,9093,9092,26379,26380"
+
+config:
+  logging:
+    aspect:
+      enabled: false
+  bpms:
+    url: http://bpms:8080
+  dso:
+    url: https://digital-signature-ops:8080
+  form-submission-validation:
+    url: http://form-submission-validation:8080
+  server:
+    max-http-request-header-size: 8KB
+
+  data-platform:
+    datasource:
+      connectionTimeout: 30000
+      maxPoolSize: 10
+
+  audit:
+    kafka:
+      schemaRegistryUrl: ""
+  tracing:
+    samplingProbability: 0.1
+
+affinity: {}
+
+automountServiceAccountToken: true
+
+autoscaling:
+  hpa:
+    enabled: false
+    maxReplicas: 3
+    minReplicas: 1
+
+container:
+  extraEnvVars: ""
+  extraVolumes: ""
+  extraVolumeMounts: ""
+
+  livenessProbe: |
+    httpGet:
+      path: /actuator/health/liveness
+      port: {{ .Values.container.port }}
+      httpHeaders:
+        - name: X-B3-Sampled
+          value: "0"
+    failureThreshold: 1
+    initialDelaySeconds: 180
+    periodSeconds: 20
+    successThreshold: 1
+    timeoutSeconds: 5
+  port: 8080
+  readinessProbe: |
+    httpGet:
+      path: /actuator/health/readiness
+      port: {{ .Values.container.port }}
+      httpHeaders:
+        - name: X-B3-Sampled
+          value: "0"
+    failureThreshold: 30
+    initialDelaySeconds: 50
+    periodSeconds: 10
+    successThreshold: 1
+    timeoutSeconds: 1
+  resources:
+    limits: {}
+    requests: {}
+  securityContext:
+    runAsUser: 1001
+  startupProbe: ""
+
+postgres:
+  database: "settings"
+  databaseOverwrite: ""  # If name not <.Values.clusterName>-< .Release.Namespace >-< .Values.postgres.database >
+  integrationSecretName: "postgresql-connection-details"
+  appSecretName: "postgresql-app-secrets"
+  # optianoal parameters if secret does not include connection parameters
+  host: ""
+  port: ""
+
+dnsPolicy: ClusterFirst
+
+global:
+  deploymentMode: null
+  deploymentStrategy: Recreate
+  language: en
+  imageRegistry:
+  imagePullSecrets: []
+
+image:
+  pullPolicy: IfNotPresent
+  pullSecrets:
+    - regcred
+  repository: user-settings-service-api
+  tag: latest
+
+extraInitContainers: ""
+
+istio:
+  sidecar:
+    enabled: true
+    requestsLimitsEnabled: true
+    resources:
+      limits: {}
+      requests: {}
+
+kafka:
+  bootstrapServers: ""
+  clusterName: kafka-cluster
+  numPartitions: 15
+  replicationFactor: 1
+  secretName: ""  #  [REQUIRED] Secret for kafka integration
+  schemaRegistrySecretName: ""  # [REQUIRED] Secret for kafka schema registry integration
+  sslCertType: PEM
+  ssl:
+    enabled: true
+
+keycloak:
+  certificatesEndpoint: /protocol/openid-connect/certs
+  url: ""  # https://keycloak.example.com/auth
+  realms:
+    mygov-biz: "mygov-biz-portal"
+
+sentinel:
+  host: ""  # by default host taken from secret key - address, will be used if set
+  port: ""  # by default host taken from secret key - port, will be used if set
+  secretName: redis-ssl-auth  # secret name for integration with Sentinel
+  ssl:
+    enabled: true
+    verifyMode: CA
+
+dbchecker:
+  enabled: true
+  image:
+    pullPolicy: IfNotPresent
+    repository: busybox
+    tag: 1.32
+  securityContext:
+    allowPrivilegeEscalation: false
+    runAsGroup: 1000
+    runAsNonRoot: true
+    runAsUser: 1000
+
+kafkachecker:
+  enabled: true
+  image:
+    pullPolicy: IfNotPresent
+    repository: busybox
+    tag: 1.32
+  securityContext:
+    allowPrivilegeEscalation: false
+    runAsGroup: 1000
+    runAsNonRoot: true
+    runAsUser: 1000
+
+auditchecker:
+  enabled: true
+  image:
+    pullPolicy: IfNotPresent
+    repository: busybox
+    tag: 1.32
+  securityContext:
+    allowPrivilegeEscalation: false
+    runAsGroup: 1000
+    runAsNonRoot: true
+    runAsUser: 1000
+
+lifecycleHooks: {}
+
+nameOverride: ""
+
+nodeSelector: {}
+
+platform:
+  security:
+    csrf:
+      enabled: true
+
+podAnnotations: {}
+
+podSecurityContext:
+  fsGroup: 1001
+
+replicas: 1
+
+schedulerName: default-scheduler
+
+service:
+  nodePort: ""
+  port: 8080
+  type: ClusterIP
+
+serviceAccount:
+  create: true
+  name: user-settings-service-api
+
+serviceMonitor:
+  enabled: false
+  interval: 15s
+  scrapePath: /actuator/prometheus-text
+
+terminationGracePeriodSeconds: 30
+
+tolerations: {}
+
+verification:
+  otp:
+    timeToLive: 300
+
+
+extraObjects: {}
+#  # Example 1: ConfigMap
+#  - apiVersion: v1
+#    kind: ConfigMap
+#    metadata:
+#      name: {{ .Release.Name }}-extra-config
+#      labels:
+#        app: {{ .Release.Name }}
+#    data:
+#      application.properties: |
+#        feature.toggle=true
+#        external.url=https://example.com
+#
+#  # Example 2: Secret (base64-encoded values)
+#  - apiVersion: v1
+#    kind: Secret
+#    metadata:
+#      name: {{ .Release.Name }}-extra-secret
+#    type: Opaque
+#    data:
+#      username: dXNlcg==    # "user"
+#      password: cGFzc3dvcmQ= # "password"
+#
+#  # Example 3: ServiceMonitor (Prometheus Operator)
+#  - apiVersion: monitoring.coreos.com/v1
+#    kind: ServiceMonitor
+#    metadata:
+#      name: {{ .Release.Name }}-servicemonitor
+#      labels:
+#        release: prometheus
+#    spec:
+#      selector:
+#        matchLabels:
+#          app: {{ .Release.Name }}
+#      endpoints:
+#        - port: http
+#          path: /actuator/prometheus-text
+#          interval: 30s
+#
+#  # Example 4: Additional Service
+#  - apiVersion: v1
+#    kind: Service
+#    metadata:
+#      name: {{ .Release.Name }}-extra-svc
+#      labels:
+#        app: {{ .Release.Name }}
+#    spec:
+#      ports:
+#        - name: metrics
+#          port: 9100
+#          targetPort: 9100
+#      selector:
+#        app: {{ .Release.Name }}
+
+otelExporter:
+  endpoint: "http://jaeger-collector.opentelemetry-operator:4318/v1/traces"

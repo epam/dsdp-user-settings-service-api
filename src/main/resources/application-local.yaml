@@ -1,0 +1,52 @@
+spring:
+  data:
+    redis:
+      sentinel:
+        master: mymaster
+        nodes: redis-sentinel:26379
+data-platform:
+  datasource:
+    url: jdbc:postgresql://settings-db:5432/settings
+    username: postgres
+    password: postgres
+  kafka:
+    producer:
+      enabled: true
+    bootstrap: kafka:9092
+    topic-properties:
+      num-partitions: 1
+      replication-factor: 1
+      creation:
+        num-partitions: 1
+        replication-factor: 1
+    ssl:
+      enabled: false
+
+server:
+  port: 8001
+
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+audit:
+  kafka:
+    bootstrap: kafka:9092
+    topic: audit-events
+    schema-registry-url: http://kafka:8081
+    ssl:
+      enabled: false
+
+logging:
+  level:
+    root: INFO
+    org.zalando.logbook: TRACE
+
+verification:
+  otp:
+    time-to-live: 300
+
+locale:
+  language: en

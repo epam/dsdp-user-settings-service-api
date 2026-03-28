@@ -1,0 +1,23 @@
+{{- if .Values.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "user-settings-service-api.name" . }}-{{ .Release.Namespace }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "user-settings-service-api.labels" . | nindent 4 }}
+spec:
+  endpoints:
+    - bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+      interval: {{ .Values.serviceMonitor.interval }}
+      path: {{ .Values.serviceMonitor.scrapePath }}
+      scheme: http
+      targetPort: {{ .Values.service.port }}
+  jobLabel: {{ include "user-settings-service-api.name" . }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      {{- include "user-settings-service-api.selectorLabels" . | nindent 6 }}
+{{- end }}

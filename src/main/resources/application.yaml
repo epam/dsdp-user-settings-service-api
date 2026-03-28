@@ -1,0 +1,94 @@
+spring:
+  application:
+    name: user-settings-service-api
+  mvc:
+    throw-exception-if-no-handler-found: true
+  web:
+    resources:
+      add-mappings: false
+  data:
+    redis:
+      password: ${REDIS_PASSWORD}
+      ssl:
+        enabled: false
+      sentinel:
+        master: mymaster
+        nodes:
+          - ${REDIS_NODE}
+
+springdoc:
+  swagger-ui:
+    path: /openapi
+    csrf:
+      enabled: true
+
+openapi:
+  request:
+    headers:
+      - X-Access-Token
+  response:
+    codes:
+      get-by-id: 200, 400, 401, 500
+      post: 200, 400, 401, 422, 500
+management:
+  tracing:
+    baggage:
+      correlation:
+        enabled: true
+        fields: x-request-id
+      remote-fields: x-request-id, x-access-token
+    enabled: true
+    propagation:
+      type: ["w3c", "b3"]
+    sampling:
+      probability: 1.0
+  endpoints:
+    enabled-by-default: false
+    web:
+      exposure:
+        include: "*"
+    jmx:
+      exposure:
+        exclude: "*"
+  endpoint:
+    health:
+      enabled: true
+      show-details: always
+      group:
+        liveness:
+          include: livenessState, livenessResponseCheck
+        readiness:
+          include: readinessState, db, kafka, redis
+    loggers:
+      enabled: true
+    prometheus:
+      enabled: true
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+
+probes:
+  liveness:
+    failureThreshold: 10
+
+platform:
+  logging:
+    aspect:
+      enabled: false
+  security:
+    enabled: true
+    whitelist:
+      - /openapi
+      - /v3/api-docs/**
+      - /swagger-ui/**
+      - /actuator/**
+      - /internalapi/**
+
+logbook:
+  exclude:
+    - /openapi
+    - /v3/api-docs/**
+    - /swagger-ui/**
+    - /actuator/**
